@@ -1,0 +1,5 @@
+module BlackmajicSDI
+
+DecklinkSettingsButton 1.0 DecklinkSettingsButton.qml
+DecklinkSettingsDialog 1.0 DecklinkSettingsDialog.qml
+DecklinkMultichoiceSetting 1.0 DecklinkMultichoiceSetting.qml
