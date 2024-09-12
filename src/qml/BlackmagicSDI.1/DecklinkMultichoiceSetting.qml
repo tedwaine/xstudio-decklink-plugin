@@ -5,65 +5,48 @@ import QtQuick.Layouts 1.3
 import QtQuick.Window 2.2
 import Qt.labs.qmlmodels 1.0
 
-import xStudio 1.1
+import xStudio 1.0
 import xstudio.qml.models 1.0
 import xstudio.qml.helpers 1.0
 
-XsComboBox {
+ColumnLayout {
 
     id: combo_box
 
-    XsModuleData {
-        id: model_data
-        modelDataName: model_name
-        onJsonChanged: {
-            __value.index = search_recursive(attr_name, "title")
-            __choices.index = search_recursive(attr_name, "title")
-        }
-    }
-    XsModelProperty {
+    XsAttributeValue {
         id: __value
-        role: "value"
-        index: model_data.search_recursive(attr_name, "title")
+        attributeTitle: attr_name
+        model: decklink_settings
     }
     property alias value: __value.value
 
-    XsModelProperty {
+    XsAttributeValue {
         id: __choices
+        attributeTitle: attr_name
+        model: decklink_settings
         role: "combo_box_options"
-        index: model_data.search_recursive(attr_name, "title")
     }
     property alias choices: __choices.value
 
-    model: choices
-
-    onActivated: {
-        if (value != choices[index]) {
-            value = choices[index]
-        }
+    XsLabel {
+        text: label_text
+        Layout.alignment: Qt.AlignLeft
     }
 
-    onValueChanged: {
-        if (choices != undefined && value != currentText) {
-            currentIndex = choices.indexOf(value)
+    XsComboBox {
+        id: resolutionChoice
+        model: choices
+        Layout.fillWidth: true
+        Layout.preferredHeight: 24
+        property var value_: value ? value : null
+        onValue_Changed: {
+            currentIndex = indexOfValue(value_)
         }
-    }
-
-    property real modelWidth: 20.0
-
-    TextMetrics {
-        id: textMetrics
-        font: combo_box.font
-    }        
-
-    onModelChanged: {
-        if (currentIndex != model.indexOf(value) &&
-            model.indexOf(value) != -1) {
-            currentIndex = model.indexOf(value)
-        }
-        for(var i = 0; i < model.length; i++){
-            textMetrics.text = model[i]
-            modelWidth = Math.max(textMetrics.width, modelWidth)
+        Component.onCompleted: currentIndex = indexOfValue(value_)
+        onCurrentValueChanged: {
+            if (value != currentValue) {
+                value = currentValue;
+            }
         }
     }
 

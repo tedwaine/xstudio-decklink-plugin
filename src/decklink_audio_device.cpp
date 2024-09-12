@@ -21,11 +21,6 @@ DecklinkAudioOutputDevice::~DecklinkAudioOutputDevice() {
     disconnect_from_soundcard(); 
 }
 
-void DecklinkAudioOutputDevice::initialize_sound_card() {
-    // not needed, video playback takes care of audio out initialisation 
-    // by creating bmd_output_
-}
-
 void DecklinkAudioOutputDevice::disconnect_from_soundcard() {
     // not needed, video playback stops starts audio output
 }
@@ -44,6 +39,7 @@ long DecklinkAudioOutputDevice::latency_microseconds() {
     return (bmd_output_->num_samples_in_buffer()*1000000)/sample_rate_;
 }
 
-void DecklinkAudioOutputDevice::push_samples(const void *sample_data, const long num_samples) {
+bool DecklinkAudioOutputDevice::push_samples(const void *sample_data, const long num_samples) {
     bmd_output_->receive_samples_from_xstudio((uint16_t *)sample_data, num_samples);
+    return true;
 }

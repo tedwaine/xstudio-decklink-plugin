@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include "xstudio/plugin_manager/plugin_base.hpp"
+#include "xstudio/ui/viewport/video_output_plugin.hpp"
 
 namespace xstudio {
     namespace bm_decklink_plugin_1_0 {
 
     class DecklinkOutput;
 
-    class BMDecklinkPlugin : public plugin::StandardPlugin {
+    class BMDecklinkPlugin : public ui::viewport::VideoOutputPlugin {
 
         public:
 
@@ -18,7 +18,18 @@ namespace xstudio {
         inline static const utility::Uuid PLUGIN_UUID =
             utility::Uuid("432c2c46-e77e-43b0-b0c0-117669d488bf");
 
-        void on_exit() override;
+        // This method should be implemented to allow cleanup of any/all resources
+        // relating to the video output
+        void exit_cleanup() override;
+
+        // This method is called when a new image buffer is ready to be displayed
+        void incoming_video_frame_callback(media_reader::ImageBufPtr incoming) override;
+
+        // Allocate your resources needed for video output, initialise hardware etc. in
+        // this function
+        void initialise() override;
+
+        audio::AudioOutputDevice * make_audio_output_device(const utility::JsonStore &prefs) override;
 
         private:
 
@@ -26,15 +37,6 @@ namespace xstudio {
 
         void attribute_changed(const utility::Uuid &attribute_uuid, const int /*role*/) override;
 
-        caf::message_handler message_handler_extensions() override {
-            return message_handler_extensions_;
-        }
-
-        void initialise();
-
-        caf::actor offscreen_viewport_;
-        caf::actor main_viewport_;
-        caf::message_handler message_handler_extensions_;
         DecklinkOutput * dcl_output_ = nullptr;
 
         module::StringChoiceAttribute *pixel_formats_ {nullptr};

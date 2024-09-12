@@ -51,54 +51,14 @@ public:
 	virtual ULONG			STDMETHODCALLTYPE	Release();
 };
 
+class BMDecklinkPlugin;
 
 class DecklinkOutput
 {
-private:
-
-	AVOutputCallback*		            output_callback_;
-	std::mutex  				mutex_;
-
-	GLenum				glStatus;
-	GLuint				idFrameBuf, idColorBuf, idDepthBuf;
-	char*				pFrameBuf;
-
-	// DeckLink
-	uint32_t					frame_width_;
-	uint32_t					frame_height_;
-	
-	IDeckLink*					decklink_interface_;
-	IDeckLinkOutput*			decklink_output_interface_;
-	IDeckLinkVideoConversion *  frame_converter_;
-	
-	BMDTimeValue				frame_duration_;
-	BMDTimeScale				frame_timescale_;
-	uint32_t					uiFPS;
-	uint32_t					uiTotalFrames;
-
-	media_reader::ImageBufPtr	raster_frame_;
-	std::mutex  				frames_mutex_;
-	bool						running_ = {false};
-
-	void query_display_modes();
-		void report_status(const std::string & status_message);
-		void report_error(const std::string & status_message);
-
-
-	std::map<std::string, std::vector<std::string>> refresh_rate_per_output_resolution_;
-	std::map<std::pair<std::string, std::string>, BMDDisplayMode> display_modes_;
-
-	BMDPixelFormat current_pix_format_;
-	BMDDisplayMode current_display_mode_;
-	std::string display_mode_name_;
-
-	RGB10BitVideoFrame * intermediate_frame_ = {nullptr};
-
-	caf::actor viewport_, parent_plugin_;
 
 public:
 
-	DecklinkOutput(caf::actor viewport, caf::actor plugin);
+	DecklinkOutput(BMDecklinkPlugin * decklink_xstudio_plugin);
 	~DecklinkOutput();
 
 	bool init_decklink();
@@ -131,6 +91,48 @@ public:
 		std::sort(result.begin(), result.end());
 		return result;
 	}	
+
+private:
+
+	AVOutputCallback*		            output_callback_;
+	std::mutex  				mutex_;
+
+	GLenum				glStatus;
+	GLuint				idFrameBuf, idColorBuf, idDepthBuf;
+	char*				pFrameBuf;
+
+	// DeckLink
+	uint32_t					frame_width_;
+	uint32_t					frame_height_;
+	
+	IDeckLink*					decklink_interface_;
+	IDeckLinkOutput*			decklink_output_interface_;
+	IDeckLinkVideoConversion *  frame_converter_;
+	
+	BMDTimeValue				frame_duration_;
+	BMDTimeScale				frame_timescale_;
+	uint32_t					uiFPS;
+	uint32_t					uiTotalFrames;
+
+	media_reader::ImageBufPtr	current_frame_;
+	std::mutex  				frames_mutex_;
+	bool						running_ = {false};
+
+	void query_display_modes();
+		void report_status(const std::string & status_message);
+		void report_error(const std::string & status_message);
+
+
+	std::map<std::string, std::vector<std::string>> refresh_rate_per_output_resolution_;
+	std::map<std::pair<std::string, std::string>, BMDDisplayMode> display_modes_;
+
+	BMDPixelFormat current_pix_format_;
+	BMDDisplayMode current_display_mode_;
+	std::string display_mode_name_;
+
+	RGB10BitVideoFrame * intermediate_frame_ = {nullptr};
+
+	BMDecklinkPlugin * decklink_xstudio_plugin_;
 
 	std::vector<int16_t> audio_samples_buffer_;
 	std::mutex audio_samples_buf_mutex_, audio_samples_cv_mutex_, bmd_mutex_;
