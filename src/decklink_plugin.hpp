@@ -31,11 +31,17 @@ namespace xstudio {
 
         audio::AudioOutputDevice * make_audio_output_device(const utility::JsonStore &prefs) override;
 
+        // This is used to communicate between the DecklinkOutput, which executes callbacks
+        // in a thread managed by the Decklink driver, and the xstudio threads
+        void receive_status_callback(const utility::JsonStore & status_data) override;
+
         private:
 
       protected:
 
         void attribute_changed(const utility::Uuid &attribute_uuid, const int /*role*/) override;
+
+        void set_pc_audio_muting();
 
         DecklinkOutput * dcl_output_ = nullptr;
 
@@ -48,10 +54,10 @@ namespace xstudio {
         module::BooleanAttribute *start_stop_ {nullptr};
         module::BooleanAttribute *track_main_viewport_ {nullptr};
         module::BooleanAttribute *auto_start_ {nullptr};
-        module::BooleanAttribute *render_16bitrgba_ {nullptr};
+        module::BooleanAttribute *disable_pc_audio_when_running_ {nullptr};
         module::IntegerAttribute *samples_water_level_ {nullptr};
         module::IntegerAttribute *audio_sync_delay_milliseconds_ {nullptr};
-
+        module::IntegerAttribute *video_pipeline_delay_milliseconds_ {nullptr};
 
     };
 } // namespace bm_decklink_plugin_1_0

@@ -1,6 +1,7 @@
 <RCC>
 	<qresource prefix="/bmd_icons">
 	    <file alias="sdi-logo.svg">BlackmagicSDI.1/sdi-logo.svg</file>
-	    <file alias="decklink_image.png">BlackmagicSDI.1/decklink_image.png</file>
+	    <file alias="status-error.svg">BlackmagicSDI.1/status-error.svg</file>
+	    <file alias="status-ok.svg">BlackmagicSDI.1/status-ok.svg</file>
 	</qresource>
 </RCC>

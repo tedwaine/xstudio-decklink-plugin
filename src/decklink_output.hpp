@@ -70,7 +70,7 @@ public:
 
 	void fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_video_frame);
 	void copy_audio_samples_to_decklink_buffer(const bool preroll);
-	void receive_samples_from_xstudio(uint16_t * samples, unsigned long num_samps);
+	void receive_samples_from_xstudio(int16_t * samples, unsigned long num_samps);
 	long num_samples_in_buffer();
 	void set_display_mode(const std::string & resolution, const std::string  &refresh_rate, const BMDPixelFormat pix_format);
 	void set_audio_samples_water_level(const int w) { samples_water_level_ = (uint32_t)w; }
@@ -119,9 +119,10 @@ private:
 	bool						running_ = {false};
 
 	void query_display_modes();
-		void report_status(const std::string & status_message);
-		void report_error(const std::string & status_message);
-
+		
+	void report_status(const std::string & status_message, bool is_running);
+	
+	void report_error(const std::string & status_message);
 
 	std::map<std::string, std::vector<std::string>> refresh_rate_per_output_resolution_;
 	std::map<std::pair<std::string, std::string>, BMDDisplayMode> display_modes_;

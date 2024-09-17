@@ -8,14 +8,8 @@
 using namespace xstudio::bm_decklink_plugin_1_0;
 using namespace xstudio::global_store;
 
-DecklinkOutput * DecklinkAudioOutputDevice::bmd_output_ = nullptr;
-
-void DecklinkAudioOutputDevice::set_output(DecklinkOutput *bmd_output) {
-    bmd_output_ = bmd_output;
-}
-
-DecklinkAudioOutputDevice::DecklinkAudioOutputDevice(const utility::JsonStore &prefs)
-    : prefs_(prefs) {}
+DecklinkAudioOutputDevice::DecklinkAudioOutputDevice(const utility::JsonStore &prefs, DecklinkOutput * bmd_output)
+    : prefs_(prefs), bmd_output_(bmd_output) {}
 
 DecklinkAudioOutputDevice::~DecklinkAudioOutputDevice() { 
     disconnect_from_soundcard(); 
@@ -40,6 +34,6 @@ long DecklinkAudioOutputDevice::latency_microseconds() {
 }
 
 bool DecklinkAudioOutputDevice::push_samples(const void *sample_data, const long num_samples) {
-    bmd_output_->receive_samples_from_xstudio((uint16_t *)sample_data, num_samples);
+    bmd_output_->receive_samples_from_xstudio((int16_t *)sample_data, num_samples);
     return true;
 }
