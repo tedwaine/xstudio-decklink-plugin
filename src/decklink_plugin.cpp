@@ -52,7 +52,9 @@ BMDecklinkPlugin::BMDecklinkPlugin(
     // on the system abort construction of the plugin (caught by plugin manager)
 	if (!dlopen(kDeckLinkAPI_Name, RTLD_NOW|RTLD_GLOBAL))
 	{
-		throw(std::runtime_error("Blackmagic Decklink SDI output disabled: drivers not found."));
+		send_exit(this, caf::exit_reason::user_shutdown);
+      	spdlog::info("Blackmagic Decklink SDI output disabled: drivers not found.");
+        return;
 	}
 
     // add attributes used for configuring the SDI output
@@ -92,17 +94,22 @@ BMDecklinkPlugin::BMDecklinkPlugin(
     auto_start_ = add_boolean_attribute("Auto Start", "Auto Start", false);
     auto_start_->set_preference_path("/plugin/decklink/auto_start_sdi");
 
-    render_16bitrgba_ = add_boolean_attribute("Use RGBA16", "Use RGBA16", false);
-    render_16bitrgba_->set_preference_path("/plugin/decklink/use_rgba16_render_bitdepth");
-
     samples_water_level_ = add_integer_attribute("Audio Samples Water Level", "Audio Samples Water Level", 4096);
     samples_water_level_->set_preference_path("/plugin/decklink/audio_samps_water_level");
 
-    audio_sync_delay_milliseconds_= add_integer_attribute("Audio Sync Delay (milliseconds)", "Audio Sync Delay (milliseconds)", 0);
+    video_pipeline_delay_milliseconds_= add_integer_attribute("Video Sync Delay", "Video Sync Delay", 0);
+    video_pipeline_delay_milliseconds_->set_preference_path("/plugin/decklink/video_sync_delay");
+    video_pipeline_delay_milliseconds_->expose_in_ui_attrs_group("Decklink Settings");
+
+    audio_sync_delay_milliseconds_= add_integer_attribute("Audio Sync Delay", "Audio Sync Delay", 0);
     audio_sync_delay_milliseconds_->set_preference_path("/plugin/decklink/audio_sync_delay");
     audio_sync_delay_milliseconds_->expose_in_ui_attrs_group("Decklink Settings");
 
+    disable_pc_audio_when_running_ = add_boolean_attribute("Auto Disable PC Audio", "Auto Disable PC Audio", false);
+    disable_pc_audio_when_running_->set_preference_path("/plugin/decklink/disable_pc_audio_when_sdi_is_running");
+    disable_pc_audio_when_running_->expose_in_ui_attrs_group("Decklink Settings");
 
+    VideoOutputPlugin::finalise();
 }
 
 // This method is called when a new image buffer is ready to be displayed
@@ -117,12 +124,28 @@ void BMDecklinkPlugin::exit_cleanup() {
     delete dcl_output_;
 }
 
+void BMDecklinkPlugin::receive_status_callback(const utility::JsonStore & status_data) {
+
+    if (status_data.contains("status_message") && status_data["status_message"].is_string()) {
+        status_message_->set_value(status_data["status_message"].get<std::string>());
+    }
+    if (status_data.contains("sdi_output_is_active") && status_data["sdi_output_is_active"].is_boolean()) {
+        sdi_output_is_running_->set_value(status_data["sdi_output_is_active"].get<bool>());
+    }
+    if (status_data.contains("error_state") && status_data["error_state"].is_boolean()) {
+        is_in_error_->set_value(status_data["error_state"].get<bool>());
+    }
+
+}
+
 void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, const int role) 
 {
     
     if (dcl_output_) {
 
         if (resolutions_ && attribute_uuid == resolutions_->uuid() && role == module::Attribute::Value) {
+
+            std::cerr << "frame_rates_->value() " << frame_rates_->value() << "\n";
 
             const auto rates = dcl_output_->get_available_refresh_rates(resolutions_->value());
             frame_rates_->set_role_data(module::Attribute::StringChoices, rates);
@@ -149,6 +172,8 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
         } 
         
         if (attribute_uuid == pixel_formats_->uuid() || attribute_uuid == resolutions_->uuid() || attribute_uuid == frame_rates_->uuid()) {
+
+            std::cerr << "resolutions_->value() " << resolutions_->value() << "\n";
 
             try {
 
@@ -178,11 +203,25 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
             } else {
                 send(main_viewport_, module::link_module_atom_v, offscreen_viewport_, false);
             }*/
-                
+            if (track_main_viewport_->value()) {
+                viewport_geometry_sync_mode(
+                    viewport::ViewportSyncMode::ViewportSyncMirrorMode | 
+                    viewport::ViewportSyncMode::ViewportSyncZoomAndPan |
+                    viewport::ViewportSyncMode::ViewportSyncFitMode);
+            } else {
+                viewport_geometry_sync_mode(viewport::ViewportSyncMode::ViewportSyncMirrorMode);
+            }
+
         } else if (attribute_uuid == samples_water_level_->uuid()) {
             dcl_output_->set_audio_samples_water_level(samples_water_level_->value());
         } else if (attribute_uuid == audio_sync_delay_milliseconds_->uuid()) {
             dcl_output_->set_audio_sync_delay_milliseconds(audio_sync_delay_milliseconds_->value());
+        } else if (attribute_uuid == video_pipeline_delay_milliseconds_->uuid()) {
+            video_delay_milliseconds(video_pipeline_delay_milliseconds_->value());
+        } else if (attribute_uuid == disable_pc_audio_when_running_->uuid()) {
+            set_pc_audio_muting();
+        } else if (attribute_uuid == sdi_output_is_running_->uuid()) {
+            set_pc_audio_muting();
         }
 
     }
@@ -191,7 +230,7 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
 }
 
 audio::AudioOutputDevice * BMDecklinkPlugin::make_audio_output_device(const utility::JsonStore &prefs) {
-    return static_cast<audio::AudioOutputDevice *>(new DecklinkAudioOutputDevice(prefs));
+    return static_cast<audio::AudioOutputDevice *>(new DecklinkAudioOutputDevice(prefs, dcl_output_));
 }
 
 void BMDecklinkPlugin::initialise() {
@@ -199,11 +238,6 @@ void BMDecklinkPlugin::initialise() {
     try {
 
         dcl_output_ = new DecklinkOutput(this);
-
-        // the audio output device is created and owned by xSTDUIO. However, it needs to
-        // interface with our DecklinkOutput instance. As such, we use a static setter
-        // so that DecklinkAudioOutputDevice can see dcl_output_.
-        DecklinkAudioOutputDevice::set_output(dcl_output_);
 
         resolutions_->set_role_data(module::Attribute::StringChoices, dcl_output_->output_resolution_names());
 
@@ -242,8 +276,34 @@ void BMDecklinkPlugin::initialise() {
             dcl_output_->StartStop();
         }
 
+        viewport_geometry_sync_mode(viewport::ViewportSyncMode::ViewportSyncMirrorMode);
+
+        video_delay_milliseconds(video_pipeline_delay_milliseconds_->value());
+
+        // tell our viewport what sort of display we are. This info is used by
+        // the colour management system to try and pick an appropriate display
+        // transform
+        display_info(
+            "SDI Video Output",
+            "Decklink",
+            "Blackmagic Design",
+            "");
+
     } catch (std::exception & e) {
         spdlog::critical("{} {}", __PRETTY_FUNCTION__, e.what());
+    }
+
+}
+
+void BMDecklinkPlugin::set_pc_audio_muting() {
+
+    // we can get access to the 
+    auto pc_audio_output_actor =
+        system().registry().template get<caf::actor>(pc_audio_output_registry);
+
+    if (pc_audio_output_actor) {
+        const bool mute = disable_pc_audio_when_running_->value() && sdi_output_is_running_->value();
+        anon_send(pc_audio_output_actor, audio::set_override_volume_atom_v, mute ? 0.0f : 100.0f);
     }
 
 }

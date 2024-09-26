@@ -21,7 +21,7 @@ namespace bm_decklink_plugin_1_0 {
     class DecklinkAudioOutputDevice : public audio::AudioOutputDevice {
       public:
 
-        DecklinkAudioOutputDevice(const utility::JsonStore &prefs);
+        DecklinkAudioOutputDevice(const utility::JsonStore &prefs, DecklinkOutput * bmd_output);
 
         ~DecklinkAudioOutputDevice() override;
 
@@ -47,15 +47,13 @@ namespace bm_decklink_plugin_1_0 {
 
         static std::string name() { return "DecklinkAudioOutputDevice"; }
 
-        static void set_output(DecklinkOutput *bmd_output);
-
       private:
         long sample_rate_           = {48000};
         int num_channels_           = {2};
         audio::SampleFormat sample_format_ = {audio::SampleFormat::INT16};
         const utility::JsonStore config_;
         const utility::JsonStore prefs_;
-        static DecklinkOutput * bmd_output_;
+        DecklinkOutput * bmd_output_;
     };
 
 

@@ -2,7 +2,6 @@
 import QtQuick 2.12
 import QtQuick.Controls 2.14
 import QtQuick.Layouts 1.3
-import QtQuick.Window 2.2
 import Qt.labs.qmlmodels 1.0
 
 import xStudio 1.0
@@ -13,17 +12,21 @@ ColumnLayout {
 
     id: combo_box
 
+    property var attr_name
+    property var label_text
+    property var attrs_model
+
     XsAttributeValue {
         id: __value
         attributeTitle: attr_name
-        model: decklink_settings
+        model: attrs_model
     }
     property alias value: __value.value
 
     XsAttributeValue {
         id: __choices
         attributeTitle: attr_name
-        model: decklink_settings
+        model: attrs_model
         role: "combo_box_options"
     }
     property alias choices: __choices.value

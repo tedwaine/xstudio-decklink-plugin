@@ -2,59 +2,67 @@
 import QtQuick 2.12
 import QtQuick.Controls 2.14
 import QtQuick.Layouts 1.3
+import QtQuick.Window 2.2
 import Qt.labs.qmlmodels 1.0
 
-import xStudio 1.0
+import xStudio 1.1
 import xstudio.qml.models 1.0
 import xstudio.qml.helpers 1.0
 
-Item {
+XsWindow {
 
 	id: bmd_settings_dialog
-    property var dockWidgetSize: 90
-
-    XsGradientRectangle{
-        anchors.fill: parent
-    }
+	width: 400
+	height: 500
+    title: "Blackmagic Designs Decklink Output"
+    centerOnOpen: true
 
     XsModuleData {
-
         id: decklink_settings
         modelDataName: "Decklink Settings"
+        onJsonChanged: {
+            running.index = search_recursive("Enabled", "title")
+            __statusMessage.index = search_recursive("Status", "title")
+            __startStop.index = search_recursive("Start Stop", "title")
+            __trackViewport.index = search_recursive("Track Viewport", "title")
+            __audioDelay.index = search_recursive("Audio Sync Delay (milliseconds)", "title")
+        }
     }
 
-    XsAttributeValue {
-        id: __decklinkEnabled
-        attributeTitle: "Enable"
-        model: decklink_settings
+    XsModelProperty {
+        id: running
+        role: "value"
+        index: decklink_settings.search_recursive("Enable", "title")
     }
-    property alias is_running: __decklinkEnabled.value
+    property alias is_running: running.value
 
-    XsAttributeValue {
-        id: __status
-        attributeTitle: "Status"
-        model: decklink_settings
+    property var foo: is_running
+
+    XsModelProperty {
+        id: __statusMessage
+        role: "value"
+        index: decklink_settings.search_recursive("Status", "title")
     }
-    property alias statusMessage: __status.value
+    property alias statusMessage: __statusMessage.value
 
-    XsAttributeValue {
+    XsModelProperty {
         id: __startStop
-        attributeTitle: "Start Stop"
-        model: decklink_settings
+        role: "value"
+        index: decklink_settings.search_recursive("Start Stop", "title")
     }
     property alias startStop: __startStop.value
 
-    XsAttributeValue {
+    XsModelProperty {
         id: __trackViewport
-        attributeTitle: "Track Viewport"
-        model: decklink_settings
+        role: "value"
+        index: decklink_settings.search_recursive("Track Viewport", "title")
     }
     property alias trackViewport: __trackViewport.value
 
-    XsAttributeValue {
+    XsModelProperty {
         id: __audioDelay
-        attributeTitle: "Audio Sync Delay (milliseconds)"
-        model: decklink_settings
+        role: "value"
+        index: decklink_settings.search_recursive("Audio Sync Delay (milliseconds)", "title")
     }
     property alias audioDelay: __audioDelay.value
 
@@ -137,9 +145,9 @@ Item {
             Text {
                 Layout.alignment: Qt.AlignRight
                 text: "SDI Output"
-                color: XsStyleSheet.controlColor
-                font.family: XsStyleSheet.controlTitleFontFamily
-                font.pixelSize: XsStyleSheet.popupControlFontSize
+                color: XsStyle.controlColor
+                font.family: XsStyle.controlTitleFontFamily
+                font.pixelSize: XsStyle.popupControlFontSize
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
             }            
@@ -199,7 +207,7 @@ Item {
                     anchors.fill: parent
                     color: "transparent"
                     radius: 5
-                    border.color: mouseArea2.containsMouse ? XsStyleSheet.highlightColor : "transparent"
+                    border.color: mouseArea2.containsMouse ? XsStyle.highlightColor : "transparent"
                     border.width: 2
                 }
 
@@ -230,9 +238,9 @@ Item {
                         Layout.column: 0
                         Layout.row: index+1
                         text: label_text
-                        color: XsStyleSheet.controlColor
-                        font.family: XsStyleSheet.controlTitleFontFamily
-                        font.pixelSize: XsStyleSheet.popupControlFontSize
+                        color: XsStyle.controlColor
+                        font.family: XsStyle.controlTitleFontFamily
+                        font.pixelSize: XsStyle.popupControlFontSize
                         horizontalAlignment: Text.AlignRight
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -257,14 +265,14 @@ Item {
                 Layout.column: 0
                 Layout.alignment: Qt.AlignRight
                 text: "Follow Main Viewport Pan/Zoom"
-                color: XsStyleSheet.controlColor
-                font.family: XsStyleSheet.controlTitleFontFamily
-                font.pixelSize: XsStyleSheet.popupControlFontSize
+                color: XsStyle.controlColor
+                font.family: XsStyle.controlTitleFontFamily
+                font.pixelSize: XsStyle.popupControlFontSize
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
             }
 
-            XsCheckBox {
+            XsCheckbox {
                 Layout.row: 6
                 Layout.column: 1
                 Layout.alignment: Qt.AlignLeft
@@ -282,18 +290,18 @@ Item {
                 Layout.column: 0
                 Layout.alignment: Qt.AlignRight
                 text: "Audio Delay (millisecs)"
-                color: XsStyleSheet.controlColor
-                font.family: XsStyleSheet.controlTitleFontFamily
-                font.pixelSize: XsStyleSheet.popupControlFontSize
+                color: XsStyle.controlColor
+                font.family: XsStyle.controlTitleFontFamily
+                font.pixelSize: XsStyle.popupControlFontSize
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
             }
 
             Rectangle {
 
-                color: XsStyleSheet.mediaInfoBarOffsetBgColor
+                color: XsStyle.mediaInfoBarOffsetBgColor
                 border.width: 1
-                border.color: ma3.containsMouse ? XsStyleSheet.hoverColor : XsStyleSheet.mainColor
+                border.color: ma3.containsMouse ? XsStyle.hoverColor : XsStyle.mainColor
                 width: audioLatencyInput.font.pixelSize*6
                 height: audioLatencyInput.font.pixelSize*1.4
                 id: audioLatencyInputBox
@@ -310,13 +318,13 @@ Item {
                     id: audioLatencyInput
                     text: "" + audioDelay
                     width: font.pixelSize*2
-                    color: enabled ? XsStyleSheet.controlColor : XsStyleSheet.controlColorDisabled
+                    color: enabled ? XsStyle.controlColor : XsStyle.controlColorDisabled
                     selectByMouse: true
                     horizontalAlignment: Qt.AlignHCenter
                     verticalAlignment: Qt.AlignVCenter
 
                     font {
-                        family: XsStyleSheet.fontFamily
+                        family: XsStyle.fontFamily
                     }
 
                     onEditingFinished: {
@@ -332,9 +340,9 @@ Item {
                 Layout.alignment: Qt.AlignRight | Qt.AlignTop
                 
                 text: "Status"
-                color: XsStyleSheet.controlColor
-                font.family: XsStyleSheet.controlTitleFontFamily
-                font.pixelSize: XsStyleSheet.popupControlFontSize
+                color: XsStyle.controlColor
+                font.family: XsStyle.controlTitleFontFamily
+                font.pixelSize: XsStyle.popupControlFontSize
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -352,9 +360,9 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 10
                     text: statusMessage != undefined ? statusMessage : ""
-                    color: XsStyleSheet.controlColor
-                    font.family: XsStyleSheet.controlTitleFontFamily
-                    font.pixelSize: XsStyleSheet.popupControlFontSize
+                    color: XsStyle.controlColor
+                    font.family: XsStyle.controlTitleFontFamily
+                    font.pixelSize: XsStyle.popupControlFontSize
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignLeft
                     verticalAlignment: Text.AlignTop
@@ -380,15 +388,15 @@ Item {
         DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
         background: Rectangle {
             radius: 5
-//                color: XsStyleSheet.highlightColor//mouseArea.containsMouse?:XsStyleSheet.controlBackground
-            color: mouseArea.containsMouse?XsStyleSheet.primaryColor:XsStyleSheet.controlBackground
+//                color: XsStyle.highlightColor//mouseArea.containsMouse?:XsStyle.controlBackground
+            color: mouseArea.containsMouse?XsStyle.primaryColor:XsStyle.controlBackground
             gradient:mouseArea.containsMouse?styleGradient.accent_gradient:Gradient.gradient
             anchors.fill: parent
         }
         contentItem: Text {
             text: btnOK.text
-            color: XsStyleSheet.hoverColor//:XsStyleSheet.mainColor
-            font.family: XsStyleSheet.fontFamily
+            color: XsStyle.hoverColor//:XsStyle.mainColor
+            font.family: XsStyle.fontFamily
             font.hintingPreference: Font.PreferNoHinting
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
