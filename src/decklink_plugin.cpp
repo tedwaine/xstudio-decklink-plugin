@@ -108,6 +108,10 @@ BMDecklinkPlugin::BMDecklinkPlugin(
     disable_pc_audio_when_running_ = add_boolean_attribute("Auto Disable PC Audio", "Auto Disable PC Audio", false);
     disable_pc_audio_when_running_->set_preference_path("/plugin/decklink/disable_pc_audio_when_sdi_is_running");
     disable_pc_audio_when_running_->expose_in_ui_attrs_group("Decklink Settings");
+<<<<<<< HEAD
+=======
+
+>>>>>>> ee1e629c4b4ca64ea35564c945ed74f1a7835be2
 
     VideoOutputPlugin::finalise();
 }
