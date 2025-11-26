@@ -9,7 +9,7 @@ find_package(OpenEXR REQUIRED)
 find_package(Imath REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-find_package(Qt5 COMPONENTS Core REQUIRED)
+find_package(Qt6 COMPONENTS Core REQUIRED)
 
 set(CMAKE_AUTORCC ON)
 
@@ -30,7 +30,7 @@ target_link_libraries(${PROJECT_NAME}
 		xstudio::plugin_manager
 		xstudio::bookmark
 		caf::core
-		Qt5::Core
+		Qt6::Core
 )
 
 message("Building plugin for xSTUDIO version ${XSTUDIO_GLOBAL_VERSION}")

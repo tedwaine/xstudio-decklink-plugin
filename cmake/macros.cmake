@@ -179,13 +179,13 @@ macro(default_options_qt name)
 	        ${CMAKE_CURRENT_SOURCE_DIR}/src
 	    SYSTEM PUBLIC
 	    	$<BUILD_INTERFACE:${ROOT_DIR}/extern/include>
-	        ${Qt5Core_INCLUDE_DIRS}
-	        ${Qt5OpenGL_INCLUDE_DIRS}
-	        ${Qt5Quick_INCLUDE_DIRS}
-	        ${Qt5Gui_INCLUDE_DIRS}
-	        ${Qt5Widgets_INCLUDE_DIRS}
-	        ${Qt5Concurrent_INCLUDE_DIRS}
-	        ${Qt5Qml_INCLUDE_DIRS}
+	        ${Qt6Core_INCLUDE_DIRS}
+	        ${Qt6OpenGL_INCLUDE_DIRS}
+	        ${Qt6Quick_INCLUDE_DIRS}
+	        ${Qt6Gui_INCLUDE_DIRS}
+	        ${Qt6Widgets_INCLUDE_DIRS}
+	        ${Qt6Concurrent_INCLUDE_DIRS}
+	        ${Qt6Qml_INCLUDE_DIRS}
 	)
 	set_target_properties(${name}
 	    PROPERTIES
@@ -347,7 +347,7 @@ macro(create_qml_component_with_alias NAME ALIASNAME VERSION DEPS EXTRAMOC)
 	foreach(MOC ${MOCSRC})
 		get_filename_component(MOCNAME "${MOC}" NAME_WE)
 
-		QT5_WRAP_CPP(${MOCNAME}_moc ${MOC})
+		qt6_wrap_cpp(${MOCNAME}_moc ${MOC})
 
 		list(APPEND SOURCES ${${MOCNAME}_moc})
 	endforeach()
