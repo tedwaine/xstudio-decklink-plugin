@@ -1,4 +1,5 @@
 #include "decklink_output.hpp"
+#include "decklink_plugin.hpp"
 #include "xstudio/utility/logging.hpp"
 #include "xstudio/utility/chrono.hpp"
 #include "xstudio/enums.hpp"
@@ -68,8 +69,8 @@ ULONG STDMETHODCALLTYPE RGB10BitVideoFrame::Release(void)
 	return newRefValue;
 }
 
-DecklinkOutput::DecklinkOutput(caf::actor viewport, caf::actor plugin)
-	: pFrameBuf(NULL), decklink_interface_(NULL), decklink_output_interface_(NULL), viewport_(viewport), parent_plugin_(plugin)
+DecklinkOutput::DecklinkOutput(BMDecklinkPlugin * decklink_xstudio_plugin)
+	: pFrameBuf(NULL), decklink_interface_(NULL), decklink_output_interface_(NULL), decklink_xstudio_plugin_(decklink_xstudio_plugin)
 {
 
     init_decklink();
@@ -236,18 +237,16 @@ void DecklinkOutput::query_display_modes() {
         // Get first avaliable video mode for Output
         if (decklink_output_interface_->GetDisplayModeIterator(&display_mode_iterator) == S_OK)
         {
-
-            char *buf = new char [4096];
-            memset(buf,0,4096);
             while (display_mode_iterator->Next(&display_mode) == S_OK) {
-
+                char *buf = new char [4096];
+                memset(buf,0,4096);
                 display_mode->GetName((const char **)&buf);
                 display_mode->GetFrameRate(&frame_duration_, &frame_timescale_);
 
                 // only names with 'i' in are interalaced as far as I can tell                
                 const bool interlaced = std::string(buf).find("i") != std::string::npos;
 
-                // Not sure if interlaced modes are worth supporting
+                // I've decided that support for interlaced modes is not useful!
                 if (interlaced) continue;
 
                 const std::string resolution_string = fmt::format("{} x {}", display_mode->GetWidth(), display_mode->GetHeight());
@@ -261,7 +260,6 @@ void DecklinkOutput::query_display_modes() {
                 display_modes_[std::make_pair(resolution_string, refresh_rate)] = display_mode->GetDisplayMode();
 
             }
-            delete [] buf;
         }
     } catch (std::exception & e) {
 
@@ -322,19 +320,19 @@ bool DecklinkOutput::start_sdi_output()
         // Get first avaliable video mode for Output
         if (decklink_output_interface_->GetDisplayModeIterator(&display_mode_iterator) == S_OK)
         {
-            char *buf = new char [4096];
             while (display_mode_iterator->Next(&display_mode) == S_OK) {
                 if (display_mode->GetDisplayMode() == current_display_mode_) {
 
                     mode_matched = true;
                     {
                         // get the name of the display mode, for display only
-                        memset(buf, 0, 4096);
+                        char *buf = new char [4096];
+                        memset(buf,0,4096);
                         display_mode->GetName((const char **)&buf);
-                        display_mode_name_ = std::string(buf);
+                        display_mode_name_ = buf;
                     }
 
-                    report_status(fmt::format("Starting Decklink output loop in mode {}.", display_mode_name_));
+                    report_status(fmt::format("Starting Decklink output loop in mode {}.", display_mode_name_), false);
 
                     frame_width_ = display_mode->GetWidth();
                     frame_height_ = display_mode->GetHeight();
@@ -349,7 +347,6 @@ bool DecklinkOutput::start_sdi_output()
 
                 }
             }
-            delete [] buf;
         }
 
         if (!mode_matched) {
@@ -407,12 +404,12 @@ bool DecklinkOutput::stop_sdi_output(const std::string &error_message)
 {
 
     running_ = false;
-    anon_send(parent_plugin_, utility::event_atom_v, false);
+    decklink_xstudio_plugin_->stop();
 
     if (!error_message.empty()) {
         report_error(error_message);
     } else {
-        report_status("SDI Output Paused.");
+        report_status("SDI Output Paused.", false);
     }
 
     spdlog::info("Stopping Decklink output loop. {}", error_message);
@@ -443,7 +440,7 @@ void DecklinkOutput::incoming_frame(const media_reader::ImageBufPtr &incoming) {
     // this is called from xstudio managed thread, which is independent of
     // the decklink output thread control
 	frames_mutex_.lock();
-    raster_frame_ = incoming;
+    current_frame_ = incoming;
 	frames_mutex_.unlock();
 
 }
@@ -456,13 +453,12 @@ namespace {
         const int n_threads) 
     {
 
-        // Unsure about this and elsewhere - threading these memcpys is necessary
-        // to get the required throughput on buffer copies, depending on the
-        // machine. Creating threads on the fly like this feels wrong but it 
-        // seems to work. Stackoverflow says its fine.
+        // Note: my instinct tells me that spawning threads for
+        // every copy operation (which might happen 60 times a second)
+        // is not efficient but it seems that having a threadpool doesn't
+        // make any real difference, the overhead of thread creation
+        // is tiny.
         std::vector<std::thread> memcpy_threads;
-        
-        // ensure sensible block size for copy
         size_t step = ((buf_size / n_threads) / 4096) * 4096;
 
         uint8_t *dst = (uint8_t *)_dst;
@@ -486,37 +482,57 @@ namespace {
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 
-void DecklinkOutput::report_status(const std::string & status_message) {
+void DecklinkOutput::report_status(const std::string & status_message, const bool sdi_output_is_active) {
 
-    anon_send(parent_plugin_, status_message, false);
+    utility::JsonStore j;
+    j["status_message"] = status_message;
+    j["sdi_output_is_active"] = sdi_output_is_active;    
+    j["error_state"] = false;    
+    decklink_xstudio_plugin_->send_status(j);
 
 }
 
 void DecklinkOutput::report_error(const std::string & status_message) {
 
-    anon_send(parent_plugin_, status_message, true);
+    utility::JsonStore j;
+    j["status_message"] = status_message;
+    j["sdi_output_is_active"] = false;    
+    j["error_state"] = true;    
+    decklink_xstudio_plugin_->send_status(j);
 }
 
 void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_video_frame)
 {
 
-    // this call is crucial to syncing the redraw of the viewport to the delivery of SDI
-    // output frames. The Blackmagic driver calls this function with a pretty solid beat
-    // corresponding to the SDI video refresh rate, so we use this to tell the viewport
-    // when an image is displayed so it knows to pick the right image to be displayed on
-    // the subsequent video refresh    
-    if (viewport_) {
-        anon_send(viewport_, ui::fps_monitor::framebuffer_swapped_atom_v, utility::clock::now());
+    // this function (fill_decklink_video_frame) is called by the Decklink API at a steady beat
+    // matching the refresh rate of the SDI output. We can therefore use it to tell our offscreen
+    // viewport to render a new frame ready for the subsequent call to this function. Remember
+    // The frame rendered by xstduio is delivered to us via the incoming_frame callback and, as
+    // long as xstudio is able to render the video frame in somthing less than the refresh period
+    // for the SDI output, it should have been delivered before we re-enter this function.
+    //
+    // The time value passed into this request is our best estimate of when the frame that we are
+    // requesting will actually be put on the screen.
+    decklink_xstudio_plugin_->request_video_frame(utility::clock::now());
 
-        // we also tell the viewport to immediately render the next frame
-        anon_send(viewport_, ui::viewport::render_viewport_to_image_atom_v);
-    }
+
+    // We also need to make this crucial call to tell xstudio's offscreen viewport when the
+    // last video frame was put on screen. It uses the regular beat of these calls to work
+    // out the refresh rate of the video output and therefore do an accurate 'pulldown' when
+    // evaluating the playhead position for the next frame to go on screen.
+    // In the case of the Decklink, we know that this function (fill_decklink_video_frame) is being
+    // called with a beat matching the SDI refresh (as long as our code immediately below 
+    // completes well inside/ that period)
+    decklink_xstudio_plugin_->video_frame_consumed(utility::clock::now());
+
+    static auto tp = utility::clock::now();
+    auto tp1 = utility::clock::now();
+    tp = tp1;
 
 	mutex_.lock();
 
 	frames_mutex_.lock();
-    // grab a copy of the latest raster frame ptr that our viewport sent us
-    media_reader::ImageBufPtr the_frame = raster_frame_;
+    media_reader::ImageBufPtr the_frame = current_frame_;
 	frames_mutex_.unlock();
 
     if (the_frame) {
@@ -527,8 +543,6 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 
             int xstudio_buf_pixel_format = the_frame->params().value("pixel_format", 0);
 
-            // Note this 10_10_10_2 pixel format trick is not required on modern hardware
-            // and 12Gig Decklink cards, they can do 12bit i.e. 36bpp @ 4K @ 60Hz no problem.
             if (xstudio_buf_pixel_format == ui::viewport::RGBA_10_10_10_2) {
 
                 if (decklink_video_frame->GetPixelFormat() != bmdFormat10BitRGB) {
@@ -575,6 +589,14 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 
                     pixel_swizzler_.cpy16bitRGBA_to_10bitRGB(pFrame, the_frame->buffer(), num_pix);
 
+                } else if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGBXLE) {
+
+                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBXLE(pFrame, the_frame->buffer(), num_pix);
+
+                } else if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGBX) {
+
+                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBX(pFrame, the_frame->buffer(), num_pix);
+
                 } else if (decklink_video_frame->GetPixelFormat() == bmdFormat12BitRGB) {
 
                     pixel_swizzler_.cpy16bitRGBA_to_12bitRGB(pFrame, the_frame->buffer(), num_pix);
@@ -595,15 +617,15 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 	{
 		mutex_.unlock();
         running_ = false;
-        anon_send(parent_plugin_, utility::event_atom_v, false);
+        decklink_xstudio_plugin_->stop();
         report_error("Failed to schedule video frame.");
 		return;
 	}
 	
     if (!running_) {
         running_ = true;
-        report_status(fmt::format("Running in mode {}.", display_mode_name_));
-        anon_send(parent_plugin_, utility::event_atom_v, true, frameWidth(), frameHeight());
+        report_status(fmt::format("Running in mode {}.", display_mode_name_), running_);
+        decklink_xstudio_plugin_->start(frameWidth(), frameHeight());
     }
 	uiTotalFrames++;
 	mutex_.unlock();
@@ -611,21 +633,24 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 /* */
 }
 
-void DecklinkOutput::receive_samples_from_xstudio(uint16_t * samples, unsigned long num_samps) 
+void DecklinkOutput::receive_samples_from_xstudio(int16_t * samples, unsigned long num_samps) 
 {
-    // note this method is called by the xstudio audio output thread
+    // note this method is called by the xstudio audio output thread in a loop
+    // that streams chunks of samples to an audio output device (i.e. this class)
+    // The xstudio audio output actor expects us to return from here only when the
+    // samples have been 'consumed'.
     {
-        // lock mutex and immediately append our samples to the buffer ready to
+        // lock mutex and immediately copy our samples to the buffer ready to
         // send to Decklink
         std::unique_lock lk2(audio_samples_buf_mutex_);
-        const size_t ce = audio_samples_buffer_.size();
-        audio_samples_buffer_.resize(ce+num_samps);
-        memcpy(audio_samples_buffer_.data()+ce, samples, num_samps*sizeof(uint16_t));
+        const size_t buf_size = audio_samples_buffer_.size();
+        audio_samples_buffer_.resize(buf_size+num_samps);
+        memcpy(audio_samples_buffer_.data()+buf_size, samples, num_samps*sizeof(int16_t));
     }
 
-    // now WAIT until the samples have been played
-    static auto t0 = utility::clock::now();
-    auto tt = utility::clock::now();
+    // now WAIT until the samples have been played (RenderAudioSamples is called
+    // from a Decklink driver thread - we only want to return from THIS function
+    // when Decklink needs a top-up of audio samples)
     std::unique_lock lk(audio_samples_cv_mutex_);
     audio_samples_cv_.wait(lk, [=] { return fetch_more_samples_from_xstudio_; });
     fetch_more_samples_from_xstudio_ = false;
@@ -634,7 +659,7 @@ void DecklinkOutput::receive_samples_from_xstudio(uint16_t * samples, unsigned l
 
 long DecklinkOutput::num_samples_in_buffer() {
 
-    // note this method is called by the xstudio audio output thread. 
+    // note this method is called by the xstudio audio output thread 
     // Have to assume that GetBufferedAudioSampleFrameCount is not thread safe. BMD SDK
     // does not tell us otherwise
     std::unique_lock lk0(bmd_mutex_);
@@ -654,11 +679,19 @@ void DecklinkOutput::copy_audio_samples_to_decklink_buffer(const bool /*preroll*
     // How many samples are sitting on the SDI card ready to be played?
 	uint32_t prerollAudioSampleCount;
 	if (decklink_output_interface_->GetBufferedAudioSampleFrameCount(&prerollAudioSampleCount) == S_OK) {
-
         if (prerollAudioSampleCount > samples_water_level_) {
-            // plenty of samples to be played, let's wait.
+            // plenty of samples already in the bmd buffer ready to be played, 
+            // let's do nothing here
             return;
         } else {
+            // We need to top-up the samples in the buffer.
+
+            // the xstudio audio output thread is probably waiting in
+            // receive_samples_from_xstudio ... because the number of samples
+            // in the BMD buffer is below our target 'water_level' we now 
+            // release the lock in 'receive_samples_from_xstudio' so that the
+            // xstudio audio sample streaming loop can continue and fetch 
+            // more samples to give to us
             {
                 std::lock_guard m(audio_samples_cv_mutex_);
                 fetch_more_samples_from_xstudio_ = true;
@@ -673,9 +706,9 @@ void DecklinkOutput::copy_audio_samples_to_decklink_buffer(const bool /*preroll*
     { 
         // 512 samples of silence to start filling buffer in the absence
         // of audio samples streaming from xstudio
-        audio_samples_buffer_.resize(1024);
+        audio_samples_buffer_.resize(4096);
         memset(audio_samples_buffer_.data(), 0, audio_samples_buffer_.size()*sizeof(uint16_t));
-    }    
+    }
 	
 	if (decklink_output_interface_->ScheduleAudioSamples(
         audio_samples_buffer_.data(),
@@ -738,6 +771,9 @@ HRESULT	AVOutputCallback::ScheduledPlaybackHasStopped ()
 }
 
 HRESULT AVOutputCallback::RenderAudioSamples (bool preroll) {
+    // decklink driver is calling this at regular intervals. There may be 
+    // plenty of samples in the buffer for it to render, we check that in
+    // our own function
 	owner_->copy_audio_samples_to_decklink_buffer(preroll);
     return S_OK;
 

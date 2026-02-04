@@ -1,6 +1,7 @@
-cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/modules")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/macros.cmake")
 
 project(xstudio_blackmagic_decklink VERSION 0.1 LANGUAGES CXX)
 

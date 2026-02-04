@@ -23,7 +23,7 @@
 				"description": "Default SDI output pixel format",
 				"value": "10 bit RGB",
 				"datatype": "string",
-				"context": ["APPLICATION"]
+				"context": ["PLUGIN"]
 			},
 			"auto_start_sdi": {
 				"path": "/plugin/decklink/auto_start_sdi",
@@ -31,23 +31,15 @@
 				"description": "If set will cause SDI output to turn on when xSTUDIO starts up.",
 				"value": false,
 				"datatype": "bool",
-				"context": ["APPLICATION"]
+				"context": ["PLUGIN"]
 			},
-			"use_rgba16_render_bitdepth": {
-				"path": "/plugin/decklink/use_rgba16_render_bitdepth",
-				"default_value": true,
-				"description": "If set will render the viewport with 16bit precision, otherwise use rgb 10_10_10.",
-				"value": true,
-				"datatype": "bool",
-				"context": ["APPLICATION"]
-			},            
 			"audio_samps_water_level": {
 				"path": "/plugin/decklink/audio_samps_water_level",
 				"default_value": 4096,
 				"description": "This determines the number of audio samples buffered by the SDI card in front of playback.",
 				"value": 4096,
 				"datatype": "int",
-				"context": ["APPLICATION"]
+				"context": ["PLUGIN"]
 			},
 			"audio_sync_delay": {
 				"path": "/plugin/decklink/audio_sync_delay",
@@ -55,7 +47,7 @@
 				"description": "This can be used to adjust sync between audio out and video.",
 				"value": 500,
 				"datatype": "int",
-				"context": ["APPLICATION"]
+				"context": ["PLUGIN"]
 			}
 		}
 	}

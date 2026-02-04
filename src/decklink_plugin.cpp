@@ -4,6 +4,8 @@
 
 #include <filesystem>
 
+#include <caf/actor_registry.hpp>
+
 #include "decklink_audio_device.hpp"
 #include "decklink_plugin.hpp"
 #include "decklink_output.hpp"
@@ -38,21 +40,23 @@ namespace {
 static const std::string version1_ui_qml(R"(
 import QtQuick 2.12
 import BlackmagicSDI 1.0
-DecklinkSettingsButton {
+DecklinkSettingsDialog {
 }
 )");
 }
 
 BMDecklinkPlugin::BMDecklinkPlugin(
     caf::actor_config &cfg, const utility::JsonStore &init_settings)
-    : plugin::StandardPlugin(cfg, "BMDecklinkPlugin", init_settings) 
+    : ui::viewport::VideoOutputPlugin(cfg, init_settings, "BMDecklinkPlugin")
 {
 
     // here we try to open the decklink driver libs. If they are not installed
     // on the system abort construction of the plugin (caught by plugin manager)
 	if (!dlopen(kDeckLinkAPI_Name, RTLD_NOW|RTLD_GLOBAL))
 	{
-		throw(std::runtime_error("Blackmagic Decklink SDI output disabled: drivers not found."));
+		send_exit(this, caf::exit_reason::user_shutdown);
+      	spdlog::info("Blackmagic Decklink SDI output disabled: drivers not found.");
+        return;
 	}
 
     // add attributes used for configuring the SDI output
@@ -85,14 +89,6 @@ BMDecklinkPlugin::BMDecklinkPlugin(
     frame_rates_->expose_in_ui_attrs_group("Decklink Settings");
     frame_rates_->set_preference_path("/plugin/decklink/output_frame_rate");
 
-    // This button is only needed for V1 user interface
-    module::QmlCodeAttribute *button = add_qml_code_attribute(
-        "MyCode",
-        version1_ui_qml);
-
-    button->expose_in_ui_attrs_group("media_tools_buttons_0");
-    button->set_role_data(module::Attribute::ToolbarPosition, 500.0);
-
     start_stop_ =
         add_boolean_attribute("Start Stop", "Start Stop", false);
     start_stop_->expose_in_ui_attrs_group("Decklink Settings");
@@ -100,165 +96,58 @@ BMDecklinkPlugin::BMDecklinkPlugin(
     auto_start_ = add_boolean_attribute("Auto Start", "Auto Start", false);
     auto_start_->set_preference_path("/plugin/decklink/auto_start_sdi");
 
-    render_16bitrgba_ = add_boolean_attribute("Use RGBA16", "Use RGBA16", false);
-    render_16bitrgba_->set_preference_path("/plugin/decklink/use_rgba16_render_bitdepth");
-
     samples_water_level_ = add_integer_attribute("Audio Samples Water Level", "Audio Samples Water Level", 4096);
     samples_water_level_->set_preference_path("/plugin/decklink/audio_samps_water_level");
 
-    audio_sync_delay_milliseconds_= add_integer_attribute("Audio Sync Delay (milliseconds)", "Audio Sync Delay (milliseconds)", 0);
+    video_pipeline_delay_milliseconds_= add_integer_attribute("Video Sync Delay", "Video Sync Delay", 0);
+    video_pipeline_delay_milliseconds_->set_preference_path("/plugin/decklink/video_sync_delay");
+    video_pipeline_delay_milliseconds_->expose_in_ui_attrs_group("Decklink Settings");
+
+    audio_sync_delay_milliseconds_= add_integer_attribute("Audio Sync Delay", "Audio Sync Delay", 0);
     audio_sync_delay_milliseconds_->set_preference_path("/plugin/decklink/audio_sync_delay");
     audio_sync_delay_milliseconds_->expose_in_ui_attrs_group("Decklink Settings");
 
-     // provide an extension to the base class message handler to handle timed
-    // callbacks to fade the laser pen strokes
-    message_handler_extensions_ = {
-        [=](offscreen_viewport_atom, caf::actor offscreen_vp) {
+    disable_pc_audio_when_running_ = add_boolean_attribute("Auto Disable PC Audio", "Auto Disable PC Audio", false);
+    disable_pc_audio_when_running_->set_preference_path("/plugin/decklink/disable_pc_audio_when_sdi_is_running");
+    disable_pc_audio_when_running_->expose_in_ui_attrs_group("Decklink Settings");
 
-        },
-        [=](media_reader::ImageBufPtr incoming) {
-            dcl_output_->incoming_frame(incoming);
-        },
-        [=](utility::event_atom, const bool running) {
-
-            if (sdi_output_is_running_->value() != running) {
-                sdi_output_is_running_->set_value(running);
-                if (!running) {
-                    send(
-                        offscreen_viewport_,
-                        video_output_actor_atom_v,
-                        caf::actor()
-                        );                
-                }
-            }
-
-        },
-        [=](utility::event_atom, const bool running, int frame_width, int frame_height) {
-
-            sdi_output_is_running_->set_value(running);
-
-            // this message tells the offscreen viewport that we are a 'video
-            // output actor'. The viewport will send us images in the desired
-            // resolution as it redraws itself
-            if (running) {
-                // tell the offscreen viewport to start rendering and sending
-                // us framebuffer captures
-                send(
-                    offscreen_viewport_,
-                    video_output_actor_atom_v,
-                    caf::actor_cast<caf::actor>(this),
-                    frame_width, 
-                    frame_height,
-                    render_16bitrgba_->value() ? viewport::RGBA_16 : viewport::RGBA_10_10_10_2 // *see note below
-                    );
-
-                // NOTE: We can use viewport::RGBA_10_10_10_2 as the desired framebuffer
-                // format for xstudio rendering. This matches the decklink buffer if RGB 10 Bit
-                // is selected for the SDI output, and is very efficient. The GPU shader 
-                // scales and packs RGB bits into the RGBA8 bit target buffer pixels as 10_10_10RGB
-                // so we only copy 32 bits per pixel from GPU to SDI. However, any overlays
-                // and blending that happens at render time does not come out correct as true
-                // rgba fragment values aren't calculated by the shader.
-                // Instead we can use 16bit output from the GPU. In testing I'm finding it takes 
-                // 20ms on my R6000 card to render a 4k frame and grab it off the card, so 
-                // we can't hit 4k@60Hz in this mde. With RGBA_10_10_10_2 4k@60Hz is possible
-                // on our powerful playback workstations.
-
-            } else {
-                // tell the offscreen viewport to strop rendering
-                send(
-                    offscreen_viewport_,
-                    video_output_actor_atom_v,
-                    caf::actor()
-                    );
-            }
-
-        },
-        [=](const std::string &status_msg, bool is_error) {
-            status_message_->set_value(status_msg);
-            // assuming we get a non-error status that we're not in an
-            // error state
-            is_in_error_->set_value(is_error);
-        },
-        [=](caf::error & err) {
-            status_message_->set_value(to_string(err));
-            is_in_error_->set_value(true);
-        }};
-
-    // Get the 'StudioUI' which lives in the Qt context and therefore is able to
-    // create offscreen viewports for us
-    auto studio_ui = system().registry().template get<caf::actor>(studio_ui_registry);
-
-    // tell the studio actor to create an offscreen viewport for us
-    request(studio_ui, infinite, offscreen_viewport_atom_v, "decklink_viewport").then(
-        [=](caf::actor offscreen_vp) {
-
-            // this is the offscreen renderer that we asked for below.
-            offscreen_viewport_ = offscreen_vp;
-            
-            // now we fetch the main viewport (named 'viewport0') from the global_playhead_events_actor that
-            // keeps track of viewports and their playheads.
-            auto playhead_events_actor = system().registry().template get<caf::actor>(global_playhead_events_actor);
-            request(playhead_events_actor, infinite, ui::viewport::viewport_atom_v, "viewport0").then(
-                [=](caf::actor vp) {
-
-                    main_viewport_ = vp;
-
-                    // connect our colour pipeline to the main viewport colour pipeline. This 
-                    // connects the OCIO View and Exposure controls
-                    request(main_viewport_, infinite, colour_pipeline::colour_pipeline_atom_v).then(
-                        [=](caf::actor main_viewport_colour_pipe) {                             
-                            request(offscreen_viewport_, infinite, colour_pipeline::colour_pipeline_atom_v).then(
-                                [=](caf::actor my_colour_pipe) {
-
-                                // The message is handled by the Module base class
-                                send(
-                                    main_viewport_colour_pipe,
-                                    module::link_module_atom_v,
-                                    my_colour_pipe,
-                                    false,
-                                    false,
-                                    true);
-
-                                },
-                                [=](caf::error &err) mutable {
-                                    spdlog::critical("{} {}", __PRETTY_FUNCTION__, to_string(err));
-                                });
-                        },
-                        [=](caf::error &err) mutable {
-                            spdlog::critical("{} {}", __PRETTY_FUNCTION__, to_string(err));
-                        });
-                },
-                [=](caf::error &err) mutable {
-                    spdlog::critical("{} {}", __PRETTY_FUNCTION__, to_string(err));
-                });
-
-            // now we have an offscreen viewport to send us frame buffers
-            // we can initialise the card and start output
-            initialise();
-
-        },
-        [=](caf::error & err) mutable {
-            status_message_->set_value(to_string(err));
-            is_in_error_->set_value(true);
-        });
-
+    VideoOutputPlugin::finalise();
 }
 
-void BMDecklinkPlugin::on_exit() {
+// This method is called when a new image buffer is ready to be displayed
+void BMDecklinkPlugin::incoming_video_frame_callback(media_reader::ImageBufPtr incoming) {
+    dcl_output_->incoming_frame(incoming);
+}
+
+void BMDecklinkPlugin::exit_cleanup() {
     // the dcl_output_ has caf::actor handles pointing to this (BMDecklinkPlugin)
     // instance. The BMDecklinkPlugin will therefore never get deleted due to
     // circular dependency so we use the on_exit
     delete dcl_output_;
-    plugin::StandardPlugin::on_exit();
 }
 
-void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, const int role) 
+void BMDecklinkPlugin::receive_status_callback(const utility::JsonStore & status_data) {
+
+    if (status_data.contains("status_message") && status_data["status_message"].is_string()) {
+        status_message_->set_value(status_data["status_message"].get<std::string>());
+    }
+    if (status_data.contains("sdi_output_is_active") && status_data["sdi_output_is_active"].is_boolean()) {
+        sdi_output_is_running_->set_value(status_data["sdi_output_is_active"].get<bool>());
+    }
+    if (status_data.contains("error_state") && status_data["error_state"].is_boolean()) {
+        is_in_error_->set_value(status_data["error_state"].get<bool>());
+    }
+
+}
+
+void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, const int role)
 {
-    
+
     if (dcl_output_) {
 
         if (resolutions_ && attribute_uuid == resolutions_->uuid() && role == module::Attribute::Value) {
+
+            std::cerr << "frame_rates_->value() " << frame_rates_->value() << "\n";
 
             const auto rates = dcl_output_->get_available_refresh_rates(resolutions_->value());
             frame_rates_->set_role_data(module::Attribute::StringChoices, rates);
@@ -282,8 +171,8 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
 
             dcl_output_->StartStop();
 
-        } 
-        
+        }
+
         if (attribute_uuid == pixel_formats_->uuid() || attribute_uuid == resolutions_->uuid() || attribute_uuid == frame_rates_->uuid()) {
 
             try {
@@ -293,7 +182,7 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
                 }
 
                 const BMDPixelFormat pix_fmt = bmd_pixel_formats[pixel_formats_->value()];
-            
+
 
                 dcl_output_->set_display_mode(
                     resolutions_->value(),
@@ -309,16 +198,28 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
 
         } else if (attribute_uuid == track_main_viewport_->uuid()) {
 
-            if (track_main_viewport_->value()) {
+            /*if (track_main_viewport_->value()) {
                 send(main_viewport_, ui::viewport::other_viewport_atom_v, offscreen_viewport_, caf::actor());
             } else {
                 send(main_viewport_, module::link_module_atom_v, offscreen_viewport_, false);
+            }*/
+            if (track_main_viewport_->value()) {
+                sync_geometry_to_main_viewport(true);
+
+            } else {
+                sync_geometry_to_main_viewport(false);
             }
-                
+
         } else if (attribute_uuid == samples_water_level_->uuid()) {
             dcl_output_->set_audio_samples_water_level(samples_water_level_->value());
         } else if (attribute_uuid == audio_sync_delay_milliseconds_->uuid()) {
             dcl_output_->set_audio_sync_delay_milliseconds(audio_sync_delay_milliseconds_->value());
+        } else if (attribute_uuid == video_pipeline_delay_milliseconds_->uuid()) {
+            video_delay_milliseconds(video_pipeline_delay_milliseconds_->value());
+        } else if (attribute_uuid == disable_pc_audio_when_running_->uuid()) {
+            set_pc_audio_muting();
+        } else if (attribute_uuid == sdi_output_is_running_->uuid()) {
+            set_pc_audio_muting();
         }
 
     }
@@ -326,30 +227,44 @@ void BMDecklinkPlugin::attribute_changed(const utility::Uuid &attribute_uuid, co
 
 }
 
+audio::AudioOutputDevice * BMDecklinkPlugin::make_audio_output_device(const utility::JsonStore &prefs) {
+    return static_cast<audio::AudioOutputDevice *>(new DecklinkAudioOutputDevice(prefs, dcl_output_));
+}
+
 void BMDecklinkPlugin::initialise() {
 
     try {
 
-        dcl_output_ = new DecklinkOutput(offscreen_viewport_, caf::actor_cast<caf::actor>(this));
+        dcl_output_ = new DecklinkOutput(this);
 
         resolutions_->set_role_data(module::Attribute::StringChoices, dcl_output_->output_resolution_names());
 
         dcl_output_->set_audio_samples_water_level(samples_water_level_->value());
         dcl_output_->set_audio_sync_delay_milliseconds(audio_sync_delay_milliseconds_->value());
 
-        // spawn our audio output 'actor'. This 'actor' class will be passed audio samples
-        // from the xstudio playhead and then hand them on to BMDecklinkPlugin class to pass
-        // into the BMD API.
-        DecklinkAudioOutputDevice::set_output(dcl_output_);
-        auto a = spawn<audio::AudioOutputActor<DecklinkAudioOutputDevice>>();
-        link_to(a);
-
         spdlog::info("Decklink Card Initialised");
 
-        // this call is essential to set-up the base class
-        make_behavior();
-
-        connect_to_ui();
+        // We register the UI here
+        register_viewport_dockable_widget(
+            "SDI Output Controls",
+            "qrc:/bmd_icons/sdi-logo.svg",   // icon for the button to activate the tool
+            "Show/Hide SDI Output Controls", // tooltip for the button,
+            10.0f,                           // button position in the buttons bar
+            true,
+            // qml code to create the left/right dockable widget
+            R"(
+                import QtQuick
+                import BlackmagicSDI 1.0
+                DecklinkSettingsVerticalWidget {
+                }
+                )",
+            // qml code to create the top/bottom dockable widget
+            R"(
+                import QtQuick
+                import BlackmagicSDI 1.0
+                DecklinkSettingsHorizontalWidget {
+                }
+                )");
 
         // now we are set-up we can kick ourselves to fill in the refresh rate list etc.
         attribute_changed(resolutions_->uuid(), module::Attribute::Value);
@@ -359,8 +274,34 @@ void BMDecklinkPlugin::initialise() {
             dcl_output_->StartStop();
         }
 
+        sync_geometry_to_main_viewport(false);
+
+        video_delay_milliseconds(video_pipeline_delay_milliseconds_->value());
+
+        // tell our viewport what sort of display we are. This info is used by
+        // the colour management system to try and pick an appropriate display
+        // transform
+        display_info(
+            "SDI Video Output",
+            "Decklink",
+            "Blackmagic Design",
+            "");
+
     } catch (std::exception & e) {
         spdlog::critical("{} {}", __PRETTY_FUNCTION__, e.what());
+    }
+
+}
+
+void BMDecklinkPlugin::set_pc_audio_muting() {
+
+    // we can get access to the
+    auto pc_audio_output_actor =
+        system().registry().template get<caf::actor>(pc_audio_output_registry);
+
+    if (pc_audio_output_actor) {
+        const bool mute = disable_pc_audio_when_running_->value() && sdi_output_is_running_->value();
+        anon_send(pc_audio_output_actor, audio::set_override_volume_atom_v, mute ? 0.0f : -1.0f);
     }
 
 }

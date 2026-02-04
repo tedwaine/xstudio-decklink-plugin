@@ -42,6 +42,18 @@ class PixelSwizzler
             void * _src,
             size_t num_pix);
 
+        void cpy16bitRGBA_to_10bitRGBX(
+            void * _dst,
+            void * _src,
+            size_t num_pix
+        );
+
+        void cpy16bitRGBA_to_10bitRGBXLE(
+            void * _dst,
+            void * _src,
+            size_t num_pix
+        );        
+
         void cpy16bitRGBA_to_10bitRGBLE(
             void * _dst,
             void * _src,

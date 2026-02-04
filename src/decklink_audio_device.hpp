@@ -21,11 +21,11 @@ namespace bm_decklink_plugin_1_0 {
     class DecklinkAudioOutputDevice : public audio::AudioOutputDevice {
       public:
 
-        DecklinkAudioOutputDevice(const utility::JsonStore &prefs);
+        DecklinkAudioOutputDevice(const utility::JsonStore &prefs, DecklinkOutput * bmd_output);
 
         ~DecklinkAudioOutputDevice() override;
 
-        void initialize_sound_card() override;
+        void initialize_sound_card() override {}
 
         void connect_to_soundcard() override;
 
@@ -33,7 +33,7 @@ namespace bm_decklink_plugin_1_0 {
 
         long desired_samples() override;
 
-        void push_samples(const void *sample_data, const long num_samples) override;
+        bool push_samples(const void *sample_data, const long num_samples) override;
 
         /* This method should return the estimated number of samples in the 'soundcard'
         buffer waiting to be played multiplied by the same rate (as microseconds)*/
@@ -47,15 +47,13 @@ namespace bm_decklink_plugin_1_0 {
 
         static std::string name() { return "DecklinkAudioOutputDevice"; }
 
-        static void set_output(DecklinkOutput *bmd_output);
-
       private:
         long sample_rate_           = {48000};
         int num_channels_           = {2};
         audio::SampleFormat sample_format_ = {audio::SampleFormat::INT16};
         const utility::JsonStore config_;
         const utility::JsonStore prefs_;
-        static DecklinkOutput * bmd_output_;
+        DecklinkOutput * bmd_output_;
     };
 
 
