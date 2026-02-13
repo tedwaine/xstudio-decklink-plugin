@@ -21,7 +21,7 @@ macro(default_compile_options name)
 	target_compile_definitions(${name}
 		PUBLIC $<$<BOOL:${BUILD_TESTING}>:test_private=public>
 		PUBLIC $<$<NOT:$<BOOL:${BUILD_TESTING}>>:test_private=private>
-		PRIVATE -D__linux__
+		PRIVATE $<$<NOT:$<PLATFORM_ID:Darwin>>:__linux__>
 		PRIVATE XSTUDIO_GLOBAL_VERSION=\"${XSTUDIO_GLOBAL_VERSION}\"
 		PRIVATE XSTUDIO_GLOBAL_NAME=\"${XSTUDIO_GLOBAL_NAME}\"
 		PRIVATE PROJECT_VERSION=\"${PROJECT_VERSION}\"

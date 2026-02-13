@@ -1,12 +1,20 @@
 #pragma once
 
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
 #include <GL/gl.h>
+#endif
 #include <mutex>
 #include <atomic>
 #include <deque>
 #include <vector>
 
 #include "extern/DeckLinkAPI.h"
+
+#ifndef STDMETHODCALLTYPE
+#define STDMETHODCALLTYPE
+#endif
 #include "xstudio/media_reader/image_buffer.hpp"
 #include "pixel_swizzler.hpp"
 
@@ -18,7 +26,7 @@ class AVOutputCallback;
 // For now we recieve a 10 bit YUV image from xstudio. We use BMD frame conversion
 // utility to convert to the selected output pixel format. This does mean
 // that 12 bit outputs don't actually have 12 bits.
-class RGB10BitVideoFrame : public IDeckLinkVideoFrame
+class RGB10BitVideoFrame : public IDeckLinkVideoFrame, public IDeckLinkVideoBuffer
 {
 private:
 
@@ -37,13 +45,17 @@ public:
 	virtual long			STDMETHODCALLTYPE	GetWidth(void)			{ return _width; };
 	virtual long			STDMETHODCALLTYPE	GetHeight(void)			{ return _height; };
 	virtual long			STDMETHODCALLTYPE	GetRowBytes(void)		{ return _width * 4; };
-	virtual HRESULT			STDMETHODCALLTYPE	GetBytes(void** buffer);
 	virtual BMDFrameFlags	STDMETHODCALLTYPE	GetFlags(void)			{ return _flags; };
 	virtual BMDPixelFormat	STDMETHODCALLTYPE	GetPixelFormat(void)	{ return bmdFormat10BitRGBX; };
-	
+
 	// Dummy implementations of remaining methods in IDeckLinkVideoFrame
 	virtual HRESULT			STDMETHODCALLTYPE	GetAncillaryData(IDeckLinkVideoFrameAncillary** ancillary) { return E_NOTIMPL; };
 	virtual HRESULT			STDMETHODCALLTYPE	GetTimecode(BMDTimecodeFormat format, IDeckLinkTimecode** timecode) { return E_NOTIMPL;	};
+
+	// IDeckLinkVideoBuffer interface (SDK v15.3: GetBytes moved here from IDeckLinkVideoFrame)
+	virtual HRESULT			STDMETHODCALLTYPE	GetBytes(void** buffer) override;
+	virtual HRESULT			STDMETHODCALLTYPE	StartAccess(BMDBufferAccessFlags flags) override { (void)flags; return S_OK; };
+	virtual HRESULT			STDMETHODCALLTYPE	EndAccess(BMDBufferAccessFlags flags) override { (void)flags; return S_OK; };
 
 	// IUnknown interface
 	virtual HRESULT			STDMETHODCALLTYPE	QueryInterface(REFIID iid, LPVOID *ppv);

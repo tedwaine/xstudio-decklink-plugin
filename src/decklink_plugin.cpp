@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
 #include <GL/glew.h>
 #include <GL/gl.h>
+#endif
 
 #include <filesystem>
 
@@ -15,9 +19,11 @@
 
 #include <ImfRgbaFile.h>
 #include <vector>
-#include <dlfcn.h>
 
+#ifndef __APPLE__
+#include <dlfcn.h>
 #define kDeckLinkAPI_Name "libDeckLinkAPI.so"
+#endif
 
 using namespace xstudio;
 using namespace xstudio::ui;
@@ -52,7 +58,20 @@ BMDecklinkPlugin::BMDecklinkPlugin(
 
     // here we try to open the decklink driver libs. If they are not installed
     // on the system abort construction of the plugin (caught by plugin manager)
+#ifdef __APPLE__
+    CFURLRef bundleURL = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
+        CFSTR("/Library/Frameworks/DeckLinkAPI.framework"), kCFURLPOSIXPathStyle, true);
+    bool drivers_found = false;
+    if (bundleURL) {
+        CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, bundleURL);
+        drivers_found = (bundle != NULL);
+        if (bundle) CFRelease(bundle);
+        CFRelease(bundleURL);
+    }
+    if (!drivers_found)
+#else
 	if (!dlopen(kDeckLinkAPI_Name, RTLD_NOW|RTLD_GLOBAL))
+#endif
 	{
 		send_exit(this, caf::exit_reason::user_shutdown);
       	spdlog::info("Blackmagic Decklink SDI output disabled: drivers not found.");
@@ -310,6 +329,7 @@ BMDecklinkPlugin::~BMDecklinkPlugin() {
 }
 
 extern "C" {
+__attribute__((visibility("default")))
 plugin_manager::PluginFactoryCollection *plugin_factory_collection_ptr() {
     return new plugin_manager::PluginFactoryCollection(
         std::vector<std::shared_ptr<plugin_manager::PluginFactory>>(

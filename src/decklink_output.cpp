@@ -1,5 +1,6 @@
 #include "decklink_output.hpp"
 #include "decklink_plugin.hpp"
+#include "extern/decklink_compat.h"
 #include "xstudio/utility/logging.hpp"
 #include "xstudio/utility/chrono.hpp"
 #include "xstudio/enums.hpp"
@@ -26,7 +27,6 @@ HRESULT RGB10BitVideoFrame::GetBytes(void **buffer)
 
 HRESULT	STDMETHODCALLTYPE RGB10BitVideoFrame::QueryInterface(REFIID iid, LPVOID *ppv)
 {
-	CFUUIDBytes		iunknown;
 	HRESULT 		result = E_NOINTERFACE;
 
 	if (ppv == NULL)
@@ -36,17 +36,28 @@ HRESULT	STDMETHODCALLTYPE RGB10BitVideoFrame::QueryInterface(REFIID iid, LPVOID 
 	*ppv = NULL;
 
 	// Obtain the IUnknown interface and compare it the provided REFIID
-	iunknown = CFUUIDGetUUIDBytes(IUnknownUUID);
+#ifdef __APPLE__
+	CFUUIDBytes iunknown = CFUUIDGetUUIDBytes(IUnknownUUID);
 	if (memcmp(&iid, &iunknown, sizeof(REFIID)) == 0)
+#else
+	static const REFIID iunknown = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46};
+	if (memcmp(&iid, &iunknown, sizeof(REFIID)) == 0)
+#endif
 	{
 		*ppv = this;
 		AddRef();
 		result = S_OK;
 	}
-	
+
 	else if (memcmp(&iid, &IID_IDeckLinkVideoFrame, sizeof(REFIID)) == 0)
 	{
 		*ppv = (IDeckLinkVideoFrame*)this;
+		AddRef();
+		result = S_OK;
+	}
+	else if (memcmp(&iid, &IID_IDeckLinkVideoBuffer, sizeof(REFIID)) == 0)
+	{
+		*ppv = (IDeckLinkVideoBuffer*)this;
 		AddRef();
 		result = S_OK;
 	}
@@ -238,13 +249,14 @@ void DecklinkOutput::query_display_modes() {
         if (decklink_output_interface_->GetDisplayModeIterator(&display_mode_iterator) == S_OK)
         {
             while (display_mode_iterator->Next(&display_mode) == S_OK) {
-                char *buf = new char [4096];
-                memset(buf,0,4096);
-                display_mode->GetName((const char **)&buf);
+                DECKLINK_STR modeName = nullptr;
+                display_mode->GetName(&modeName);
+                std::string buf = decklink_string_to_std(modeName);
+                decklink_free_string(modeName);
                 display_mode->GetFrameRate(&frame_duration_, &frame_timescale_);
 
-                // only names with 'i' in are interalaced as far as I can tell                
-                const bool interlaced = std::string(buf).find("i") != std::string::npos;
+                // only names with 'i' in are interalaced as far as I can tell
+                const bool interlaced = buf.find("i") != std::string::npos;
 
                 // I've decided that support for interlaced modes is not useful!
                 if (interlaced) continue;
@@ -326,10 +338,10 @@ bool DecklinkOutput::start_sdi_output()
                     mode_matched = true;
                     {
                         // get the name of the display mode, for display only
-                        char *buf = new char [4096];
-                        memset(buf,0,4096);
-                        display_mode->GetName((const char **)&buf);
-                        display_mode_name_ = buf;
+                        DECKLINK_STR modeName = nullptr;
+                        display_mode->GetName(&modeName);
+                        display_mode_name_ = decklink_string_to_std(modeName);
+                        decklink_free_string(modeName);
                     }
 
                     report_status(fmt::format("Starting Decklink output loop in mode {}.", display_mode_name_), false);
@@ -531,6 +543,10 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 
 	mutex_.lock();
 
+	// SDK v15.3: GetBytes() moved from IDeckLinkVideoFrame to IDeckLinkVideoBuffer
+	IDeckLinkVideoBuffer* video_buffer = nullptr;
+	decklink_video_frame->QueryInterface(IID_IDeckLinkVideoBuffer, (void**)&video_buffer);
+
 	frames_mutex_.lock();
     media_reader::ImageBufPtr the_frame = current_frame_;
 	frames_mutex_.unlock();
@@ -549,10 +565,10 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 
                     // our xstudio frame is 10 bit RGB, so we need to do a conversion
                     // N.B. Under testing this approach doesn't work, video output is
-                    // in wrong pixel format for any mode other than 10bit RGB. 
+                    // in wrong pixel format for any mode other than 10bit RGB.
                     // More work to be done.
 
-                    if (!intermediate_frame_ || intermediate_frame_->GetWidth() != decklink_video_frame->GetWidth() || 
+                    if (!intermediate_frame_ || intermediate_frame_->GetWidth() != decklink_video_frame->GetWidth() ||
                         intermediate_frame_->GetHeight() != decklink_video_frame->GetHeight()) {
                         // new intermediate frame needed
                         if (intermediate_frame_) intermediate_frame_->Release();
@@ -571,18 +587,18 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
                         stop_sdi_output("Unable to convert frame pixel formats.");
                     }
 
-                } else {
+                } else if (video_buffer) {
 
                     void*	pFrame;
-                    decklink_video_frame->GetBytes((void**)&pFrame);
+                    video_buffer->GetBytes((void**)&pFrame);
                     multithreadMemCopy(pFrame, the_frame->buffer(), decklink_video_frame->GetRowBytes()*frame_height_, 8);
 
                 }
 
-            } else if (xstudio_buf_pixel_format == ui::viewport::RGBA_16) {
+            } else if (xstudio_buf_pixel_format == ui::viewport::RGBA_16 && video_buffer) {
 
                 void*	pFrame;
-                decklink_video_frame->GetBytes((void**)&pFrame);
+                video_buffer->GetBytes((void**)&pFrame);
                 int num_pix = decklink_video_frame->GetWidth() * decklink_video_frame->GetHeight();
 
                 if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGB) {
@@ -613,6 +629,8 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
         }
     }
 
+	if (video_buffer) video_buffer->Release();
+
 	if (decklink_output_interface_->ScheduleVideoFrame(decklink_video_frame, (uiTotalFrames * frame_duration_), frame_duration_, frame_timescale_) != S_OK)
 	{
 		mutex_.unlock();
@@ -621,7 +639,7 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
         report_error("Failed to schedule video frame.");
 		return;
 	}
-	
+
     if (!running_) {
         running_ = true;
         report_status(fmt::format("Running in mode {}.", display_mode_name_), running_);
@@ -630,7 +648,6 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
 	uiTotalFrames++;
 	mutex_.unlock();
 
-/* */
 }
 
 void DecklinkOutput::receive_samples_from_xstudio(int16_t * samples, unsigned long num_samps) 
