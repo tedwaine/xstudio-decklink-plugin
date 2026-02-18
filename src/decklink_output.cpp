@@ -576,52 +576,80 @@ void DecklinkOutput::fill_decklink_video_frame(IDeckLinkVideoFrame* decklink_vid
                     }
 
                     // copy from xstudio frame to intermediate frame
-                    void*	pFrame;
+                    void*	pFrame = nullptr;
                     intermediate_frame_->GetBytes((void**)&pFrame);
-                    multithreadMemCopy(pFrame, the_frame->buffer(), intermediate_frame_->GetRowBytes()*frame_height_, 8);
+                    void* src_buf = the_frame->buffer();
+                    if (pFrame && src_buf) {
+                        multithreadMemCopy(pFrame, src_buf, intermediate_frame_->GetRowBytes()*frame_height_, 8);
 
-                    // do conversion
-                    auto result = frame_converter_->ConvertFrame(intermediate_frame_, decklink_video_frame);
-                    if (FAILED(result))
-                    {
-                        stop_sdi_output("Unable to convert frame pixel formats.");
+                        // do conversion
+                        auto result = frame_converter_->ConvertFrame(intermediate_frame_, decklink_video_frame);
+                        if (FAILED(result))
+                        {
+                            stop_sdi_output("Unable to convert frame pixel formats.");
+                        }
+                    } else {
+                        spdlog::warn("Decklink: null buffer in conversion path (pFrame={}, src={})", pFrame, src_buf);
                     }
 
                 } else if (video_buffer) {
 
-                    void*	pFrame;
-                    video_buffer->GetBytes((void**)&pFrame);
-                    multithreadMemCopy(pFrame, the_frame->buffer(), decklink_video_frame->GetRowBytes()*frame_height_, 8);
+                    HRESULT sa_hr = video_buffer->StartAccess(bmdBufferAccessReadAndWrite);
+                    void*	pFrame = nullptr;
+                    HRESULT gb_hr = video_buffer->GetBytes((void**)&pFrame);
+                    void* src_buf = the_frame->buffer();
+                    if (pFrame && src_buf) {
+                        multithreadMemCopy(pFrame, src_buf, decklink_video_frame->GetRowBytes()*frame_height_, 8);
+                    } else {
+                        spdlog::warn("Decklink: null buffer in direct copy path (pFrame={}, src={}, StartAccess=0x{:x}, GetBytes=0x{:x})",
+                            pFrame, src_buf, (unsigned long)sa_hr, (unsigned long)gb_hr);
+                    }
+                    video_buffer->EndAccess(bmdBufferAccessReadAndWrite);
 
                 }
 
             } else if (xstudio_buf_pixel_format == ui::viewport::RGBA_16 && video_buffer) {
 
-                void*	pFrame;
-                video_buffer->GetBytes((void**)&pFrame);
+                // On macOS, DMA buffers may need StartAccess to map into CPU memory
+                HRESULT sa_hr = video_buffer->StartAccess(bmdBufferAccessReadAndWrite);
+                void*	pFrame = nullptr;
+                HRESULT gb_hr = video_buffer->GetBytes((void**)&pFrame);
                 int num_pix = decklink_video_frame->GetWidth() * decklink_video_frame->GetHeight();
+                void* src_buf = the_frame->buffer();
 
-                if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGB) {
+                // Validate pointers and ensure source buffer is large enough
+                // for num_pix RGBA_16 pixels (8 bytes each)
+                if (!pFrame || !src_buf) {
+                    spdlog::warn("Decklink: null buffer in fill_decklink_video_frame "
+                        "(pFrame={}, src_buf={}, num_pix={}, StartAccess=0x{:x}, GetBytes=0x{:x})",
+                        pFrame, src_buf, num_pix, (unsigned long)sa_hr, (unsigned long)gb_hr);
+                } else if (the_frame->size() < (size_t)num_pix * 8) {
+                    spdlog::warn("Decklink: source buffer too small "
+                        "(size={}, need={}, frame={}x{}, src_format=RGBA_16)",
+                        the_frame->size(), (size_t)num_pix * 8,
+                        decklink_video_frame->GetWidth(), decklink_video_frame->GetHeight());
+                } else if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGB) {
 
-                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGB(pFrame, the_frame->buffer(), num_pix);
+                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGB(pFrame, src_buf, num_pix);
 
                 } else if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGBXLE) {
 
-                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBXLE(pFrame, the_frame->buffer(), num_pix);
+                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBXLE(pFrame, src_buf, num_pix);
 
                 } else if (decklink_video_frame->GetPixelFormat() == bmdFormat10BitRGBX) {
 
-                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBX(pFrame, the_frame->buffer(), num_pix);
+                    pixel_swizzler_.cpy16bitRGBA_to_10bitRGBX(pFrame, src_buf, num_pix);
 
                 } else if (decklink_video_frame->GetPixelFormat() == bmdFormat12BitRGB) {
 
-                    pixel_swizzler_.cpy16bitRGBA_to_12bitRGB(pFrame, the_frame->buffer(), num_pix);
+                    pixel_swizzler_.cpy16bitRGBA_to_12bitRGB(pFrame, src_buf, num_pix);
 
                 } else if (decklink_video_frame->GetPixelFormat() == bmdFormat12BitRGBLE) {
 
-                    pixel_swizzler_.cpy16bitRGBA_to_12bitRGBLE(pFrame, the_frame->buffer(), num_pix);
+                    pixel_swizzler_.cpy16bitRGBA_to_12bitRGBLE(pFrame, src_buf, num_pix);
 
                 }
+                video_buffer->EndAccess(bmdBufferAccessReadAndWrite);
 
             }
 
